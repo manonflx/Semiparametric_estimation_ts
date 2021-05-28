@@ -1,0 +1,2493 @@
+---
+title: "Plots and Tables - Master thesis"
+author: "Manon Felix"
+date: '`r format(Sys.time())`'
+output:
+  html_document:
+    theme: paper 
+    highlight: tango
+    toc: true
+    toc_depth: 3       
+    toc_float: true     
+    # css: styles.css
+---
+
+\newcommand{\bs}[1]{\boldsymbol{#1}}
+\newcommand{\betab}{\bs\beta}
+\newcommand{\epsilonb}{\bs\epsilon}
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = 'center', out.width = '80%', warning = FALSE, message = FALSE)
+```
+
+
+# Functions 
+
+`Whittle` is a function based on the source code of the `longmemo` package, I have simply adapted the notation and inputs to be clearer. 
+
+Function `Whittle = function(theta, phi, H, p, q, y)` where: 
+
+* $theta$ is a vector of length $p$. 
+* $phi$ is a vector of length $q$. 
+* $H$ self-similarity parameter (recap: ARIMA(0,d,0) process d = H −
+1/2)
+* $p$ , $q$ are optional integers specifying the AR and MA orders of the FARIMA model
+* $y$ is a numeric vector representing a time series
+
+The `Wasserstein` function computes the estimated parameter of a process by minimising the wasserstein distance between the standardized perdiodogram ordinates and a vector, say $t$, of random variables following an Exponential(1) distribution.
+
+Function `Wasserstein = function(theta, phi, H, p, q, y, theoritical, weighted = FALSE, sinkhorn = FALSE, lambda = 1, cdf = FALSE, mean = FALSE, k = 1)` where 
+
+
+* $theta$ is a vector of length $p$. 
+* $phi$ is a vector of length $q$. 
+* $H$ self-similarity parameter (recap: ARIMA(0,d,0) process d = H −
+1/2)
+* $p$ , $q$ are optional integers specifying the AR and MA orders of the FARIMA model
+* $y$ is a numeric vector representing a time series
+* $theoritical$ is a vector of length $((n-1)/2)$ of Exponential(1) random variables (use `rexp(((n-1)/2), rate = 1)`). 
+* $weighted$ specifies whether weights for the std.per.ord should be used when calculating the Wasserstein distance. The weights chosen are 
+
+$$w_j = \frac{I(\lambda_j)}{f(\lambda_j; \theta)} / \sum  \frac{I(\lambda_j)}{f(\lambda_j; \theta)} \textit{   for a fixed } \theta$$
+
+* $sinkhorn$ specifies whether instead of the Wasserstein distance the Sinkhorn distance should be calculated with the lambda corresponding to the next input.
+* $cdf$ specifies if the true cumulative distribution function must be used to compute the Wasserstein distance. 
+* $mean$ compute the mean of the minimum wasserstein estimator with corresponding $k$ vectors $Z_j$
+
+Note: the packages use for the [Wasserstein](https://cran.r-project.org/web/packages/transport/transport.pdf) and the [Sinkhorn](https://cran.r-project.org/web/packages/Barycenter/Barycenter.pdf) are respectively `transport` and `Barycenter`. 
+
+# Packages 
+
+```{r, message = FALSE, warning=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggfortify)
+library(gridExtra)
+library(ggpubr)
+library(patchwork)
+library(pracma)
+library(T4transport)
+library(Barycenter)
+
+## Load functions 
+source("/Users/manonfelix/OneDrive/Master thesis/Redaction/WH_WD_SH_functions.R")
+```
+
+
+# Estimation methods 
+
+## Minimum Wasserstein Estimators 
+
+### Figure 1
+
+```{r, out.width='60%', fig.pos='h'}
+set.seed(8963)
+### Simulate time series
+p = 1
+n = 3001
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD_2 = rep(NA, m)
+WH_2 = rep(NA, m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(8764)
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  WD_2[i] = (mean(abs(sort(t) - sort(per_ord_std[,i]))^p)^(1/p))
+  WH_2[i] = sum(per_ord_std[,i])
+}
+
+### Plot the Wasserstein loss function 
+p3 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+  
+### Zoom 
+
+p4 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Zoom on the minimum")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+   coord_cartesian(xlim=c(0.775, 0.825), ylim=c((min(WD_2)-0.0001), (min(WD_2)+0.001)))
+
+
+
+combined <- p3 + p4 & theme(legend.title = element_blank(), legend.position = 'bottom')
+combined + plot_layout(guides = "collect")
+
+```
+
+```{r wasserstein_farima, out.width='60%', fig.cap="Wasserstein loss functions of two FARIMA(0,d,0) processes where H = 0.8 (d = 1.2). The sample size is 3001. The left column display the entire loss functions for all possible parameter values that a long-memory process can take (0.51 < H < 0.99). The right column is a zoom on the functions.", fig.pos='h'}
+set.seed(8963)
+### Simulate time series
+p = 1
+n = 3001
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD_2 = rep(NA, m)
+WH_2 = rep(NA, m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(8764)
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  WD_2[i] = (mean(abs(sort(t) - sort(per_ord_std[,i]))^p)^(1/p))
+  WH_2[i] = sum(per_ord_std[,i])
+}
+
+### Plot the Wasserstein loss function 
+p3 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+  
+### Zoom 
+
+p4 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Zoom on the minimum")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+   coord_cartesian(xlim=c(0.775, 0.825), ylim=c((min(WD_2)-0.0001), (min(WD_2)+0.001)))
+
+set.seed(3459)
+### Simulate time series
+n = 3001
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD_2 = numeric(m)
+WH_2 = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(8764)
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  WD_2[i] = (mean(abs(sort(t) - sort(per_ord_std[,i]))^p)^(1/p))
+  WH_2[i] = sum(per_ord_std[,i])
+}
+
+### Plot the Wasserstein loss function 
+p3 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+  
+### Zoom 
+
+p4 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Zoom")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+   coord_cartesian(xlim=c(0.75, 0.85), ylim=c((min(WD_2)-0.001), (min(WD_2)+0.005)))
+
+
+combined <- p3 + p4 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+```
+
+### Figure 2
+
+```{r wasserstein_z, fig.cap = "Wasserstein loss function of the FARIMA(0,d,0) process (bottom one) of Figure 1 computed with another random vector.", fig.pos='h', out.width='55%'}
+set.seed(3459)
+### Simulate time series
+n = 3001
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD = numeric(m)
+WH = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(8764)
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  WD[i] = (mean(abs(sort(t) - sort(per_ord_std[,i]))^p)^(1/p))
+  WH[i] = sum(per_ord_std[,i])
+}
+
+### Plot the Wasserstein loss function 
+p3 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+
+set.seed(3459)
+### Simulate time series
+n = 3001
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD_2 = numeric(m)
+WH_2 = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(-23.12092)
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  WD_2[i] = (mean(abs(sort(t) - sort(per_ord_std[,i]))^p)^(1/p))
+  WH_2[i] = sum(per_ord_std[,i])
+}
+
+### Plot the Wasserstein loss function 
+p5 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 9, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+
+combined <- p5 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+```
+
+### Figure 3 
+
+```{r MWE_n, fig.cap="Four different FARIMA(0,d,0) processes for different sample sizes (n = 51, 101, 1001 and 3001). For the same process, we simulate 200 vectors following an exponential distribution and then compute the MWE. The figure represents the four histograms of the MWE. The dashed line is the true parameter H = 0.7 value and the full line is the mean of the MWE.", fig.pos="h", out.width='70%'}
+set.seed(1991)
+sim = 200
+
+MWE_51 = numeric(sim)
+
+# Simulate the process 
+n = 51
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(25, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE_51[i] = res$minimum
+  
+}
+
+p21 = ggplot(data = NULL, aes(x = MWE_51)) + 
+    geom_histogram(alpha=0.4,
+               fill="#FF85A1",
+               colour = "#F9BEC7") +
+  theme_classic() + 
+  theme(axis.text=element_text(size=9),
+        axis.title=element_text(size=9,face="bold")) +
+  xlab("MWE") +
+  ylab("Count") +
+  ggtitle(paste("n = ", n)) +
+  geom_vline(xintercept = mean(MWE_51))+
+  coord_cartesian(xlim = c(0.51, 0.99)) +
+  geom_vline(xintercept = H, linetype = "dashed")
+
+set.seed(1992)
+MWE_101 = numeric(sim)
+
+# Simulate the process 
+n = 101
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(50, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE_101[i] = res$minimum
+  
+}
+
+p101 = ggplot(data = NULL, aes(x = MWE_101)) + 
+    geom_histogram(alpha=0.4,
+               fill="#FF85A1",
+               colour = "#F9BEC7") +
+  theme_classic() + 
+  theme(axis.text=element_text(size=9),
+        axis.title=element_text(size=9,face="bold")) +
+  xlab("MWE") +
+  ylab("Count") +
+  ggtitle(paste("n = ", n)) +
+  geom_vline(xintercept = mean(MWE_101))+
+  coord_cartesian(xlim = c(0.51, 0.99)) +
+  geom_vline(xintercept = H, linetype = "dashed")
+
+
+set.seed(1414)
+sim = 200
+
+MWE_1001 = numeric(sim)
+
+# Simulate the process 
+n = 1001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE_1001[i] = res$minimum
+  
+}
+
+p1001 = ggplot(data = NULL, aes(x = MWE_1001)) + 
+    geom_histogram(alpha=0.4,
+               fill="#FF85A1",
+               colour = "#F9BEC7") +
+  theme_classic() + 
+  theme(axis.text=element_text(size=9),
+        axis.title=element_text(size=9,face="bold")) +
+  xlab("MWE") +
+  ylab("Count") +
+  ggtitle(paste("n = ", n)) +
+  geom_vline(xintercept = mean(MWE_1001)) +
+  coord_cartesian(xlim = c(0.51, 0.99)) +
+  geom_vline(xintercept = H, linetype = "dashed")
+
+set.seed(9393)
+sim = 200
+
+MWE_3001 = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE_3001[i] = res$minimum
+  
+}
+
+p3001 = ggplot(data = NULL, aes(x = MWE_3001)) + 
+    geom_histogram(alpha=0.4,
+               fill="#FF85A1",
+               colour = "#F9BEC7") +
+  theme_classic() + 
+  theme(axis.text=element_text(size=9),
+        axis.title=element_text(size=9,face="bold")) +
+  xlab("MWE") +
+  ylab("Count") +
+  ggtitle(paste("n = ", n)) +
+  geom_vline(xintercept = mean(MWE_3001))+
+  coord_cartesian(xlim = c(0.51, 0.99)) +
+  geom_vline(xintercept = H, linetype = "dashed")
+
+ggarrange(p21, p101, p1001, p3001, nrow = 2, ncol =2)
+```
+
+## Mean of the Minimum Wasserstein Estimators 
+
+### Table 1
+
+```{r}
+set.seed(1414)
+sim = 1
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+
+round(mean(MWE), digits = 3)
+```
+
+
+```{r}
+set.seed(1414)
+sim = 10
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+
+round(mean(MWE), digits = 3)
+```
+
+```{r}
+set.seed(1414)
+sim = 20
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+round(mean(MWE), digits = 3)
+```
+
+```{r}
+set.seed(1414)
+sim =  50
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+round(mean(MWE), digits = 3)
+```
+
+```{r}
+set.seed(1414)
+sim = 100
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+round(mean(MWE), digits = 3)
+```
+
+```{r}
+set.seed(1414)
+sim = 200
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+round(mean(MWE), digits = 3)
+```
+
+
+```{r}
+set.seed(1414)
+sim = 500
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+round(mean(MWE), digits = 3)
+```
+
+
+```{r}
+set.seed(1414)
+sim = 1000
+
+MWE = numeric(sim)
+
+# Simulate the process 
+n = 3001
+H = 0.7
+y = longmemo::simARMA0(n, H = H)
+
+# Compute the MWE using different seed
+for (i in 1:sim){
+  t = rexp(1500, rate = 1)
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, 
+                 theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  MWE[i] = res$minimum
+  
+}
+round(mean(MWE), digits = 3)
+```
+
+### Figure 4
+
+```{r , fig.width = 7, fig.height = 4, out.width='60%'}
+set.seed(1414)
+### Simulate time series
+n = 3001
+H = 0.8
+p = 1
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+
+WD = c()
+WH = c()
+
+for (i in 1:ncol(per_ord_std)){
+  ## Empirical CDF values 
+  fun.ecdf <- ecdf(per_ord_std[,i])
+  my.ecdf <- fun.ecdf(sort(per_ord_std[,i]))
+  
+  WD[i] =  pracma::trapz(sort(per_ord_std[,i]) ,  abs(1- exp(-sort(per_ord_std[,i])) - my.ecdf))
+
+  WH[i] = sum(per_ord_std[,i])
+}
+
+
+### Plot the Wasserstein loss function 
+p1 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 8, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MSWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+   geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T, linetype = "dashed") + 
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+  
+### Zoom 
+
+p2 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 8, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Zoom")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MSWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T, linetype = "dashed") +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+  coord_cartesian(xlim=c(0.79, 0.84), ylim=c((min(WD)-0.0001), (min(WD)+0.001)))
+
+
+combined <- p1 + p2 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+```
+
+```{r semi_wass, fig.width = 7, fig.height = 4, out.width='60%', fig.cap="Semidiscrete Wasserstein loss functions for two FARIMA(0,d,0) processes. The sample size is 3001 and the true parameter value is 0.8."}
+set.seed(2345)
+### Simulate time series
+n = 3001
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+WD_2 = c()
+WH_2 = c()
+
+for (i in 1:ncol(per_ord_std)){
+  ## Empirical CDF values 
+  fun.ecdf <- ecdf(per_ord_std[,i])
+  my.ecdf <- fun.ecdf(sort(per_ord_std[,i]))
+  
+  WD_2[i] =  pracma::trapz(sort(per_ord_std[,i]) ,  abs(1- exp(-sort(per_ord_std[,i])) - my.ecdf))
+
+  WH_2[i] = sum(per_ord_std[,i])
+}
+
+
+### Plot the Wasserstein loss function 
+p3 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 8, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MSWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+  
+### Zoom 
+
+p4 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 8, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Zoom")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MSWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+   coord_cartesian(xlim=c(0.65, 0.95), ylim=c((min(WD_2)-0.0001), (min(WD_2)+0.01)))
+
+
+
+combined <- p3 + p4 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+```
+
+### Figure 5
+
+```{r small_sample, fig.cap="Wasserstein loss function for a small sample size (n = 21) FARIMA(0,d,0) process.", out.width='60%'}
+set.seed(1263)
+### Simulate time series
+n = 21
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD_2 = rep(NA, m)
+WH_2 = rep(NA, m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(5474)
+t = rexp(10,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  WD_2[i] = (mean(abs(sort(t) - sort(per_ord_std[,i]))^p)^(1/p))
+  WH_2[i] = sum(per_ord_std[,i])
+}
+
+### Plot the Wasserstein loss function 
+p3 = ggplot(data = NULL, aes(x = par, y = WD_2)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 8, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression(""),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_2)], colour = paste("MWE: ", round(par[which.min(WD_2)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH_2)], colour = paste("WH: ", round(par[which.min(WH_2)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+  theme(legend.title = element_blank(), legend.position = 'bottom') 
+
+p3
+```
+
+## Minimum Weighted Wasserstein Estimators
+
+### Figure 6
+
+```{r weighted_wasserstein, fig.cap="Weighted Wasserstein loss function of the FARIMA(0,d,0) process on Figure 1 (bottom)."}
+set.seed(3459)
+### Simulate time series
+n = 3001
+H = 0.8
+y = longmemo::simARMA0(n, H = H)
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD = numeric(m)
+WH = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(8764)
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  weight = per_ord_std[,i] / sum(per_ord_std[,i])
+  WD[i] = transport::wasserstein1d(t, per_ord_std[,i],  wa = NULL, wb = weight, p = 1)
+  WH[i] = sum(per_ord_std[,i])
+}
+
+p6 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Weighted Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) + 
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+
+p7 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Zoom on the minimum")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) + 
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+   coord_cartesian(xlim=c(0.76, 0.82), ylim=c((min(WD)-0.001), (min(WD)+0.005)))
+
+
+combined <- p6 + p7 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+
+```
+
+### Figure 7
+
+```{r wass_ar1, fig.cap="Wasserstein loss and weighted Wasserstein loss functions of a Gaussian AR(1) process. The sample size is 3001 and the true parameter is 0.6.", out.width='70%'}
+set.seed(8677)
+### Simulate time series
+n = 3001
+theta0 = 0.6
+p = 1
+y <- arima.sim(n = n, list(ar = theta0), rand.gen = rnorm, sd = 1) 
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(-0.99, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD = numeric(m)
+WH = numeric(m)
+WD_w = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    Rar <- cos(px[i]) %*% par[j]
+    Iar <- sin(px[i]) %*% par[j]
+    far = (1-Rar)^2 + Iar^2
+    spec[i,j] = 1/far
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(3456)
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  weight = per_ord_std[,i] / sum(per_ord_std[,i])
+  WD[i] = transport::wasserstein1d(t, per_ord_std[,i],  wa = NULL, wb = NULL, p = 1)
+  WH[i] = sum(per_ord_std[,i])
+  WD_w [i]= transport::wasserstein1d(t, per_ord_std[,i],  wa = NULL, wb = weight, p = 1)
+}
+
+
+### Plot the Wasserstein loss function 
+a1 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + 
+  theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Wasserstein Loss, AR(1)")) +
+  geom_vline(aes(xintercept = theta0, colour = paste("True parameter: ", theta0)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) +
+  theme(legend.title = element_blank(), legend.position = 'bottom') +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+
+a2 = ggplot(data = NULL, aes(x = par, y = WD_w)) + geom_line(alpha = 0.6) + 
+  theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Weighted Wasserstein Loss, AR(1)")) +
+  geom_vline(aes(xintercept = theta0, colour = paste("True parameter: ", theta0)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD_w)], colour = paste("MWWE: ", round(par[which.min(WD_w)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) +
+  theme(legend.title = element_blank(), legend.position = 'bottom') +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+
+combined <- a1 + a2 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+```
+
+
+##Minimum Sinkhorn Estimator 
+
+### Figure 8
+
+```{r wasserstein_SH, out.width='65%'}
+set.seed(87597684)
+### Simulate time series
+n = 1801
+H = 0.8
+p = 1
+#library(arfima)
+#arfima.sim(1000, model = list(phi = .2, dfrac = .3, dint = 2))
+#y = arfima.sim(3001, model = list(H = H))
+#y = longmemo::simARMA0(n, H = H)
+y = fracdiff::fracdiff.sim(n, d = H - 1/2)
+y = y$series
+
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD = numeric(m)
+WH = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(1256)
+t = rexp(m,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+    WD[i] = (mean(abs(sort(t) - sort(per_ord_std[,i]))^p)^(1/p))
+    WH[i] = sum(per_ord_std[,i])
+}
+
+### Plot the Sinkhorn loss function 
+p8 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+
+
+## Zoom 
+
+p9 = ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Zoom on the minimum")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+  coord_cartesian(xlim=c(H-0.15,H+0.15), ylim=c((min(WD)-0.00001), (min(WD)+0.015)))
+
+combined <- p8 + p9 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+
+
+```
+
+```{r sinkhorn, fig.cap = "Top: Wasserstein loss function of a FARIMA(0,d,0) process. Bottom: Sinkhorn loss function of the same process. The sample size is 1801.", out.width='65%'}
+set.seed(87597684)
+### Simulate time series
+n = 1801
+H = 0.8
+#library(arfima)
+#arfima.sim(1000, model = list(phi = .2, dfrac = .3, dint = 2))
+#y = arfima.sim(3001, model = list(H = H))
+#y = longmemo::simARMA0(n, H = H)
+y = fracdiff::fracdiff.sim(n, d = H - 1/2)
+y = y$series
+
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.5, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+SH_bary_farima = numeric(m)
+WH = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+set.seed(1256)
+t = rexp(m,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+lambda = 0.2
+for (i in 1:length(per_ord_std[,i])){
+    x = as.matrix(per_ord_std[,i]/ sum(per_ord_std[,i]))
+    z = as.matrix(t/sum(t))
+    size <- seq(0,1,length.out =30)
+    costm <- as.matrix(dist(expand.grid(size,rev(size)), diag=TRUE, upper=TRUE))
+    
+    SH_bary_farima[i] = Barycenter::Sinkhorn(x, z, costm, lambda = lambda)$Distance
+    WH[i] = sum(per_ord_std[,i])
+}
+
+
+
+### Plot the Wasserstein loss function 
+p10 = ggplot(data = NULL, aes(x = par, y = SH_bary_farima)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Sinkhorn Loss :", expression(lambda), "= 0.2, FARIMA(0,d,0)")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(SH_bary_farima)], colour = paste("MSE: ", round(par[which.min(SH_bary_farima)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+
+
+## Zoom 
+
+p11 = ggplot(data = NULL, aes(x = par, y = SH_bary_farima)) + geom_line(alpha = 0.6) + theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Zoom on the minimum")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(SH_bary_farima)], colour = paste("MSE: ", round(par[which.min(SH_bary_farima)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T) +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6")) +
+  coord_cartesian(xlim=c(H-0.05,H+0.05), ylim=c((min(SH_bary_farima)-0.00001), (min(SH_bary_farima)+0.001)))
+
+combined <- p10 + p11 & theme(legend.title = element_blank(), legend.position = 'bottom') 
+combined + plot_layout(guides = "collect")
+
+```
+
+### Figure 9
+
+```{r SH_CV, cache=TRUE, fig.cap="Testing MSE vs lambda values for an AR(1) process. The sample size is  4001 and the true parameter value is 0.6. For this process, the minimum MSE is achieved when lambda = 0.1."}
+set.seed(4545)
+n = 4001
+theta0 = 0.6
+y <- arima.sim(n = n, list(ar = theta0), rand.gen = rnorm, sd = 1) 
+
+set.seed(986)
+t = rexp(1600, rate = 1)
+
+## Split data into train & test 
+library(caret)
+intrain<-createDataPartition(y ,p = 0.8, list=FALSE)
+train<- y[intrain]
+test<-y[-intrain]
+
+lambda = c(0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8)
+MSE = numeric(length(lambda))
+par = numeric(length(lambda))
+
+for (j in 1:length(lambda)){
+  res = optimize(Wasserstein, lower = -0.99, upper = 0.99, maximum = FALSE, H = 1/2, phi = 0, p = 1, q = 0, y = train, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = lambda[j])
+  par[j] = res$minimum
+  
+  # predictions on test
+  n = length(test)
+  resid = test[2:n] - par[j] * test[1:n-1]
+  MSE[j] = (1/n) * sum((resid)^2)
+}
+
+
+data.point = as.data.frame(cbind(lambda,MSE, par = round(par, digits = 3)))
+
+ggplot(data = data.point, aes(x = lambda, y = MSE), label = par) + geom_point(col = "hotpink4") + geom_line(col = "hotpink4") + geom_text(size = 3, aes(label=par),hjust=0, vjust=1.2) + theme_classic() +
+  xlab(expression(lambda)) 
+
+```
+
+# Results 
+
+## Long-memory Process
+
+### Figure 10 
+
+```{r box_farima_t200, fig.cap="Boxplots of all the estimators presented during this thesis. The sample size of the 200 simulated FARIMA(0,d,0) is 3201."}
+knitr::include_graphics("/Users/manonfelix/OneDrive/Master thesis/Redaction/images/box_farima_t200.png")
+```
+
+```{r, eval=FALSE}
+mt = 200
+
+WH_G1 = numeric(mt)
+WD_G1 = numeric(mt)
+Weighted_WD_G1 = numeric(mt)
+WD_cdf_G1 = numeric(mt)
+WD_mean_G1 = numeric(mt)
+SH_01_G1 = numeric(mt)
+SH_03_G1 = numeric(mt)
+
+set.seed(1405)
+for (i in 1:mt){
+  n = 3201
+  H = 0.8
+  y <- longmemo::simARMA0(n, H)
+  t = rexp(1600, rate = 1)
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t)
+  WD_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, mean = TRUE, k = 50)
+  WD_mean_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, cdf = TRUE)
+  WD_cdf_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = TRUE)
+  Weighted_WD_G1[i] = res$minimum
+
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  SH_01_G1[i] = res$minimum
+   
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  SH_03_G1[i] = res$minimum
+}
+
+```
+
+
+```{r, eval = FALSE}
+a = data.frame(group = "Whittle", value = WH_G1)
+b = data.frame(group = "Wass.", value = WD_G1)
+c = data.frame(group = "Weighted Wass.", value = Weighted_WD_G1)
+d = data.frame(group = "Semi. Wass.", value = WD_cdf_G1)
+e = data.frame(group = "Wass. k = 50", value = WD_mean_G1)
+f = data.frame(group = "Sink. 0.1", value = SH_01_G1)
+g = data.frame(group = "Sink. 0.3", value = SH_03_G1)
+
+H = 0.8
+
+
+plot.data = rbind(a, b, c, d ,e,f,g) 
+plot.data
+
+mse = cbind(a, b, c, d, e,f,g)
+mse = as.data.frame(mse)
+
+
+
+library(ggplot2)
+ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = H) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("n = 1801, FARIMA(0,d,0) Gaussian, mt = 200")+
+  scale_fill_brewer(palette = "RdPu")
+  
+boxplot(plot.data$value ~ plot.data$group , col=rgb(0.3,0.5,0.4,0.6) , ylab="value" , xlab="names in desired order")
+
+
+for (i in c(2,4,6,8,10,12,14)){
+  MSE = sum((mse[,i] - theta0)^2)
+  print(paste(mse[1,i-1], ": MSE = ", round(MSE, digits = 5)))
+}
+
+```
+
+### Figure 11 
+
+```{r box_farima_t1, fig.cap="Boxplots of all the estimators presented during this thesis. The sample size of the 200 simulated FARIMA(0,d,0) is 3201. All the estimators are computed using a unique random vector."}
+knitr::include_graphics("/Users/manonfelix/OneDrive/Master thesis/Redaction/images/boxplot_farima_t1.png")
+```
+
+```{r, eval=FALSE}
+mt = 200
+
+set.seed(1405)
+t = rexp(1600, rate = 1)
+
+WH_G1 = numeric(mt)
+WD_G1 = numeric(mt)
+Weighted_WD_G1 = numeric(mt)
+WD_cdf_G1 = numeric(mt)
+WD_mean_G1 = numeric(mt)
+SH_01_G1 = numeric(mt)
+SH_03_G1 = numeric(mt)
+
+for (i in 1:mt){
+  n = 3201
+  H = 0.8
+  y <- longmemo::simARMA0(n, H)
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t)
+  WD_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, mean = TRUE, k = 50)
+  WD_mean_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, cdf = TRUE)
+  WD_cdf_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = TRUE)
+  Weighted_WD_G1[i] = res$minimum
+
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  SH_01_G1[i] = res$minimum
+   
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  SH_03_G1[i] = res$minimum
+}
+
+```
+
+
+
+#### Heavy-Tailed Distribution
+
+##### Figure 12 
+
+```{r student_t, fig.cap="Wasserstein loss function of a FARIMA(0,d,0) process distributed according to a Student t distribution with degree of freedom equal to 2. The sample size is equal to 3001.", out.width='60%'}
+#FARIMA(0,d,0) following a Student t distribution 
+set.seed(6565)
+n = 3001
+H = 0.8
+y = fracdiff::fracdiff.sim(n, d = H - 1/2, rand.gen = rt , df = 2)
+y = y$series
+p = 1
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.51, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD = numeric(m)
+WH = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  weight = per_ord_std[,i] / sum(per_ord_std[,i])
+  WD[i] = transport::wasserstein1d(t, per_ord_std[,i],  wa = NULL, wb = NULL, p = 1)
+  WH[i] = sum(per_ord_std[,i])
+}
+
+
+### Plot the Wasserstein loss function 
+ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + 
+  theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0), Student t")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T, linetype = "dashed") +
+  theme(legend.title = element_blank(), legend.position = 'bottom') +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+```
+
+##### Figure 13
+
+```{r box_farima_student, fig.cap = "Boxplots of all the estimators presented during this thesis. The sample size of the 200 simulated FARIMA(0,d,0) is 3201 and the underlying distribution is a Student t with degree of freedom equal to 2."}
+knitr::include_graphics("/Users/manonfelix/OneDrive/Master thesis/Redaction/images/boxplot_farima_student.png")
+```
+
+```{r, eval=FALSE}
+mt = 200
+
+set.seed(1405)
+
+
+WH_G1 = numeric(mt)
+WD_G1 = numeric(mt)
+Weighted_WD_G1 = numeric(mt)
+WD_cdf_G1 = numeric(mt)
+WD_mean_G1 = numeric(mt)
+SH_01_G1 = numeric(mt)
+SH_03_G1 = numeric(mt)
+
+for (i in 1:mt){
+  n = 3201
+  H = 0.8
+  t = rexp(1600, rate = 1)
+  y = fracdiff::fracdiff.sim(n, d = H - 1/2, rand.gen = rt , df = 2)
+  y = y$series
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t)
+  WD_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, mean = TRUE, k = 50)
+  WD_mean_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, cdf = TRUE)
+  WD_cdf_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = TRUE)
+  Weighted_WD_G1[i] = res$minimum
+
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  SH_01_G1[i] = res$minimum
+   
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  SH_03_G1[i] = res$minimum
+}
+
+```
+
+
+```{r, eval = FALSE}
+a = data.frame(group = "Whittle", value = WH_G1)
+b = data.frame(group = "Wasserstein", value = WD_G1)
+c = data.frame(group = "Weighted Wass.", value = Weighted_WD_G1)
+d = data.frame(group = "Semi. Wass.", value = WD_cdf_G1)
+e = data.frame(group = "Wass. k = 50", value = WD_mean_G1)
+f = data.frame(group = "Sinkhorn 0.1", value = SH_01_G1)
+g = data.frame(group = "Sinkhorn 0.3", value = SH_03_G1)
+
+H = 0.8
+
+
+plot.data = rbind(a, b, c, d ,e,f,g) 
+
+
+mse = cbind(a, b, c, d, e,f,g)
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10,12,14)){
+  MSE = sum((mse[,i] - theta0)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("Whittle", "Wasserstein", "Wass. k = 50", "Semi. Wass.", "Weighted Wass.", "Sinkhorn 0.1", "Sinkhorn 0.3"))
+
+library(ggplot2)
+ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = H) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("FARIMA(0,d,0) Student t, mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(0.51, 0.99)
+
+
+```
+
+##### Figure 14 
+
+```{r skewt_density, out.width='50%', fig.cap="Skew t distribution with degree of freedom = 2 and gamma = 4."}
+ggplot(data.frame(x=c(-5,15)), aes(x)) + stat_function(fun=skewt::dskt, color='violetred3', args=list(df=4, gamma = 2)) + theme_classic() + ylab("Density") + xlab('Value') +ggtitle("Skew t distribution, df = 2 and gamma = 4") +  stat_function(fun=dnorm, color='gray')
+```
+
+##### Figure 15
+
+```{r skew_t, fig.cap="Wasserstein loss function of a FARIMA(0,d,0) process distributed according to a skew t distribution with degree of freedom = 4 and gamma = 2. The sample size is equal to 3001.", out.width='60%'}
+#FARIMA(0,d,0) following a Student t distribution 
+set.seed(4433)
+n = 3001
+H = 0.8
+y = fracdiff::fracdiff.sim(n, d = H - 1/2, rand.gen = skewt::rskt , df = 4, gamma = 2)
+y = y$series
+p = 1
+
+## Fundamental frequencies
+m = length(y); mhalfm <- (m-1) %/% 2L
+x <- 2*pi/m * (1:mhalfm)
+
+### Compute the periodogram ordinates 
+per = (Mod(fft(y))^2/(2*pi*m)) [1:(m %/% 2 + 1)]
+yper = periodogr.x = per[2:((m+1) %/% 2)]
+
+### Parameter values
+par = seq(0.51, 0.99, length.out = length(x))
+m = length(par)
+
+### Initialize matrices and vector(s)
+per_ord_std = matrix(nrow=length(x), ncol=length(par)); 
+spec = matrix(nrow=length(x), ncol=length(par))
+px <- outer(x, 1:p)
+WD = numeric(m)
+WH = numeric(m)
+
+### Compute the standardized periodogram ordinates
+for (i in 1:length(x)){
+  for (j in 1:length(par)){
+    spec[i,j] = sqrt(2 - 2*cos(px[i]))^(1-2*par[j])
+    per_ord_std[i,j]  = 2*pi * yper[i] / spec[i,j]
+  }}
+
+### Generate the random vector of Exponential(1) variables
+
+t = rexp(1500,rate  = 1)
+
+### Compute the 1-Wasserstein distance between the SPOs and t 
+p = 1
+for (i in 1:length(per_ord_std[,i])){
+  weight = per_ord_std[,i] / sum(per_ord_std[,i])
+  WD[i] = transport::wasserstein1d(t, per_ord_std[,i],  wa = NULL, wb = NULL, p = 1)
+  WH[i] = sum(per_ord_std[,i])
+}
+
+
+### Plot the Wasserstein loss function 
+ggplot(data = NULL, aes(x = par, y = WD)) + geom_line(alpha = 0.6) + 
+  theme_classic() +
+  theme(plot.title = element_text(color = "black", size = 10, face = "italic", hjust = 0.5)) +
+  labs(y = expression(""), x = expression("Parameter values"),
+       title = paste("Wasserstein Loss, FARIMA(0,d,0), Skew t")) +
+  geom_vline(aes(xintercept = H, colour = paste("True parameter: ", H)), show.legend = T) + 
+  geom_vline(aes(xintercept = par[which.min(WD)], colour = paste("MWE: ", round(par[which.min(WD)], digits = 3))), show.legend = T) +
+  geom_vline(aes(xintercept = par[which.min(WH)], colour = paste("WH: ", round(par[which.min(WH)], digits = 3))), show.legend = T, linetype = "dashed") +
+  theme(legend.title = element_blank(), legend.position = 'bottom') +
+  scale_colour_manual(values = c("#03045E", "#FF0A54", "#0077B6"))
+```
+
+##### Figure 16 
+
+```{r box_farima_skewt, fig.cap="Boxplots of all the estimators presented during this thesis. The sample size of the 200 simulated FARIMA(0,d,0) is 3201 and the underlying distribution is a skew t with df = 4 and gamma = 2.", fig.pos = "h"}
+knitr::include_graphics("/Users/manonfelix/OneDrive/Master thesis/Redaction/images/boxplot_farima_skewt.png")
+```
+
+```{r, eval=FALSE}
+mt = 200
+
+set.seed(1405)
+
+
+WH_G1 = numeric(mt)
+WD_G1 = numeric(mt)
+Weighted_WD_G1 = numeric(mt)
+WD_cdf_G1 = numeric(mt)
+WD_mean_G1 = numeric(mt)
+SH_01_G1 = numeric(mt)
+SH_03_G1 = numeric(mt)
+
+for (i in 1:mt){
+  n = 3201
+  H = 0.8
+  t = rexp(1600, rate = 1)
+  y = fracdiff::fracdiff.sim(n, d = H - 1/2, rand.gen = skewt::rskt , df = 4, gamma = 2)
+  y = y$series
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t)
+  WD_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, mean = TRUE, k = 50)
+  WD_mean_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, cdf = TRUE)
+  WD_cdf_G1[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = TRUE)
+  Weighted_WD_G1[i] = res$minimum
+
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  SH_01_G1[i] = res$minimum
+   
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  SH_03_G1[i] = res$minimum
+}
+
+```
+
+
+```{r, eval = FALSE}
+a = data.frame(group = "Whittle", value = WH_G1)
+b = data.frame(group = "Wasserstein", value = WD_G1)
+c = data.frame(group = "Weighted Wass.", value = Weighted_WD_G1)
+d = data.frame(group = "Semi. Wass.", value = WD_cdf_G1)
+e = data.frame(group = "Wass. k = 50", value = WD_mean_G1)
+f = data.frame(group = "Sinkhorn 0.1", value = SH_01_G1)
+g = data.frame(group = "Sinkhorn 0.3", value = SH_03_G1)
+
+H = 0.8
+
+
+plot.data = rbind(a, b, c, d ,e,f,g) 
+
+
+mse = cbind(a, b, c, d, e,f,g)
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10,12,14)){
+  MSE = sum((mse[,i] - theta0)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("Whittle", "Wasserstein", "Wass. k = 50", "Semi. Wass.", "Weighted Wass.", "Sinkhorn 0.1", "Sinkhorn 0.3"))
+
+library(ggplot2)
+ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = H) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("FARIMA(0,d,0) Skew t, mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(0.7, 0.99)
+
+
+```
+
+#### Additive Outliers 
+
+##### Table 4 
+
+```{r, eval = FALSE}
+set.seed(1234)
+tictoc::tic()
+mt = 200
+
+# set.seed(1234)
+t = rexp(1500, rate = 1)
+
+WH_longmemo = numeric(mt)
+WD_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+SH_001_longmemo = numeric(mt)
+SH_01_longmemo = numeric(mt)
+SH_03_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+
+for (i in 1:mt){
+  n = 3001
+  H = 0.8
+  c = 10
+  Z = rbinom(n, 1, 0)
+  X = longmemo::simARMA0(n, H = H)
+  V = rt(n, 2)
+  y = (1-Z)*X + Z*(c*V)
+
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  WD_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = TRUE, sinkhorn = FALSE)
+  Weighted_WD_longmemo[i] = res$minimum
+  
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.01)
+  # SH_001_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  # SH_01_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  # SH_03_longmemo[i] = res$minimum
+}
+
+a = data.frame(group = "Whittle", value = WH_longmemo)
+b = data.frame(group = "Wasserstein", value = WD_longmemo)
+c = data.frame(group = "Weighted Wasserstein", value = Weighted_WD_longmemo)
+# d = data.frame(group = "Sinkhorn, 0.01", value = data$value_3)
+# e = data.frame(group = "Sinkhorn, 0.1", value = data$value_4)
+# f = data.frame(group = "Sinkhorn, 0.3", value = data$value_5)
+H = 0.8
+
+
+plot.data = rbind(a, b, c) 
+
+
+library(ggplot2)
+ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = H) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("n = 1801, AR(1) Gaussian, mt = 200")
+
+mse = cbind(a, b, c)
+MSE = numeric(3)
+
+for (i in c(2,4,6)){
+  MSE[i] = sum((mse[,i] - H)^2)
+  print(paste(mse[1,i-1], ": MSE = ", round(MSE[i], digits = 5)))
+}
+
+MSE[2] / MSE[6]
+```
+
+```{r, eval = FALSE}
+set.seed(1234)
+tictoc::tic()
+mt = 200
+
+# set.seed(1234)
+t = rexp(1500, rate = 1)
+
+WH_longmemo = numeric(mt)
+WD_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+SH_001_longmemo = numeric(mt)
+SH_01_longmemo = numeric(mt)
+SH_03_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+
+for (i in 1:mt){
+  n = 3001
+  H = 0.8
+  c = 10
+  Z = rbinom(n, 1, 0.001)
+  X = longmemo::simARMA0(n, H = H)
+  V = rt(n, 2)
+  y = (1-Z)*X + Z*(c*V)
+
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  WD_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = TRUE, sinkhorn = FALSE)
+  Weighted_WD_longmemo[i] = res$minimum
+  
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.01)
+  # SH_001_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  # SH_01_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  # SH_03_longmemo[i] = res$minimum
+}
+
+a = data.frame(group = "Whittle", value = WH_longmemo)
+b = data.frame(group = "Wasserstein", value = WD_longmemo)
+c = data.frame(group = "Weighted Wasserstein", value = Weighted_WD_longmemo)
+# d = data.frame(group = "Sinkhorn, 0.01", value = data$value_3)
+# e = data.frame(group = "Sinkhorn, 0.1", value = data$value_4)
+# f = data.frame(group = "Sinkhorn, 0.3", value = data$value_5)
+H = 0.8
+
+
+plot.data = rbind(a, b, c) 
+
+
+library(ggplot2)
+ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = H) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("n = 1801, AR(1) Gaussian, mt = 200")
+
+mse = cbind(a, b, c)
+MSE = numeric(3)
+
+for (i in c(2,4,6)){
+  MSE[i] = sum((mse[,i] - H)^2)
+  print(paste(mse[1,i-1], ": MSE = ", round(MSE[i], digits = 5)))
+}
+
+MSE[2] / MSE[6]
+```
+
+```{r, eval = FALSE}
+set.seed(1234)
+tictoc::tic()
+mt = 200
+
+# set.seed(1234)
+t = rexp(1500, rate = 1)
+
+WH_longmemo = numeric(mt)
+WD_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+SH_001_longmemo = numeric(mt)
+SH_01_longmemo = numeric(mt)
+SH_03_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+
+for (i in 1:mt){
+  n = 3001
+  H = 0.8
+  c = 10
+  Z = rbinom(n, 1, 0.01)
+  X = longmemo::simARMA0(n, H = H)
+  V = rt(n, 2)
+  y = (1-Z)*X + Z*(c*V)
+
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  WD_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = TRUE, sinkhorn = FALSE)
+  Weighted_WD_longmemo[i] = res$minimum
+  
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.01)
+  # SH_001_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  # SH_01_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  # SH_03_longmemo[i] = res$minimum
+}
+
+a = data.frame(group = "Whittle", value = WH_longmemo)
+b = data.frame(group = "Wasserstein", value = WD_longmemo)
+c = data.frame(group = "Weighted Wasserstein", value = Weighted_WD_longmemo)
+# d = data.frame(group = "Sinkhorn, 0.01", value = data$value_3)
+# e = data.frame(group = "Sinkhorn, 0.1", value = data$value_4)
+# f = data.frame(group = "Sinkhorn, 0.3", value = data$value_5)
+H = 0.8
+
+
+plot.data = rbind(a, b, c) 
+
+
+library(ggplot2)
+ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = H) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("n = 1801, AR(1) Gaussian, mt = 200")
+
+mse = cbind(a, b, c)
+MSE = numeric(3)
+
+for (i in c(2,4,6)){
+  MSE[i] = sum((mse[,i] - H)^2)
+  print(paste(mse[1,i-1], ": MSE = ", round(MSE[i], digits = 5)))
+}
+
+MSE[2] / MSE[6]
+```
+
+
+```{r, eval = FALSE}
+set.seed(1234)
+tictoc::tic()
+mt = 200
+
+# set.seed(1234)
+t = rexp(1500, rate = 1)
+
+WH_longmemo = numeric(mt)
+WD_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+SH_001_longmemo = numeric(mt)
+SH_01_longmemo = numeric(mt)
+SH_03_longmemo = numeric(mt)
+Weighted_WD_longmemo = numeric(mt)
+
+for (i in 1:mt){
+  n = 3001
+  H = 0.8
+  c = 10
+  Z = rbinom(n, 1, 0.05)
+  X = longmemo::simARMA0(n, H = H)
+  V = rt(n, 2)
+  y = (1-Z)*X + Z*(c*V)
+
+
+  res = optimize(Whittle, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 0, q = 0, y = y)
+  WH_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0 , phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = FALSE)
+  WD_longmemo[i] = res$minimum
+  
+  res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = TRUE, sinkhorn = FALSE)
+  Weighted_WD_longmemo[i] = res$minimum
+  
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.01)
+  # SH_001_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.1)
+  # SH_01_longmemo[i] = res$minimum
+  # 
+  # res = optimize(Wasserstein, lower = 0.51, upper = 0.99, maximum = FALSE, theta = 0, phi = 0, p = 1, q = 0, y = y, theoritical = t, weighted = FALSE, sinkhorn = TRUE, lambda = 0.3)
+  # SH_03_longmemo[i] = res$minimum
+}
+
+a = data.frame(group = "Whittle", value = WH_longmemo)
+b = data.frame(group = "Wasserstein", value = WD_longmemo)
+c = data.frame(group = "Weighted Wasserstein", value = Weighted_WD_longmemo)
+# d = data.frame(group = "Sinkhorn, 0.01", value = data$value_3)
+# e = data.frame(group = "Sinkhorn, 0.1", value = data$value_4)
+# f = data.frame(group = "Sinkhorn, 0.3", value = data$value_5)
+H = 0.8
+
+
+plot.data = rbind(a, b, c) 
+
+
+library(ggplot2)
+ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = H) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("n = 1801, AR(1) Gaussian, mt = 200")
+
+mse = cbind(a, b, c)
+MSE = numeric(3)
+
+for (i in c(2,4,6)){
+  MSE[i] = sum((mse[,i] - H)^2)
+  print(paste(mse[1,i-1], ": MSE = ", round(MSE[i], digits = 5)))
+}
+
+MSE[2] / MSE[6]
+```
+
+### Short-Memory Process 
+
+#### Figure 17 
+
+```{r, out.width='60%'}
+knitr::include_graphics("/Users/manonfelix/OneDrive/Master thesis/Redaction/images/AR2_gauss.png")
+```
+
+```{r, out.width='60%'}
+knitr::include_graphics("/Users/manonfelix/OneDrive/Master thesis/Redaction/images/AR2_student.png")
+```
+
+```{r box_ar2, out.width = '60%', fig.cap="Boxplots of the Whittle's estimator, MWE, MSWE, MMWE, MWWE for 200 AR(2) processes. The innovation terms densities are (in the order of apparition): Gaussian, Student t, Skew t. The left column is the first parameter (0.75) of the process, the right one is for the second parameter (-0.25)."}
+knitr::include_graphics("/Users/manonfelix/OneDrive/Master thesis/Redaction/images/AR2_skewt.png")
+```
+
+```{r, eval = FALSE}
+set.seed(1234)
+mt = 200
+n = 3201
+
+
+WH_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+WD_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+Weighted_WD_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+WD_cdf_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+WD_mean_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+SH_01_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+SH_03_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+
+theta0 = c(0.75, -0.25)
+
+for (i in 1:mt){
+
+  y <- arima.sim(n = n, list(ar = theta0), rand.gen = rnorm, sd = 1)  
+  t = rexp(1600, rate = 1)
+  
+  res = optim(par = c(0,0), Whittle, H = 0.5, phi = 0, p = 2, q = 0, y = y)
+  WH_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t)
+  WD_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, mean = TRUE, k = 50)
+  WD_mean_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, cdf = TRUE)
+  WD_cdf_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, weighted = TRUE)
+  Weighted_WD_AR2[i,] = res$par
+  
+  #  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, sinkhorn = TRUE, lambda = 0.1)
+  # SH_01_AR2[i,] = res$par
+  #  
+  # res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, sinkhorn = TRUE, lambda = 0.3)
+  # SH_03_AR2[i,] = res$par
+
+}
+
+
+```
+
+```{r, eval = FALSE}
+### First parameter 0.75
+a = data.frame(group = "WH", value = WH_AR2[,1])
+b = data.frame(group = "MWE", value = WD_AR2[,1])
+c = data.frame(group = "MWWE", value = Weighted_WD_AR2[,1])
+d = data.frame(group = "MSWE", value = WD_cdf_AR2[,1])
+e = data.frame(group = "MMWE k = 50", value = WD_mean_AR2[,1])
+#f = data.frame(group = "Sinkhorn 0.1", value = SH_01_AR2[,1])
+#g = data.frame(group = "Sinkhorn 0.3", value = SH_03_AR2[,1])
+
+
+plot.data = rbind(a, b, c, d, e) 
+
+
+mse = cbind(a, b, c, d, e) 
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10)){
+  MSE = sum((mse[,i] - 0.75)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("WH", "MWE", "MMWE k = 50", "MSWE", "MWWE"))
+
+library(ggplot2)
+p1 = ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = 0.75) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("AR(2), mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(0.5, 0.99)
+
+
+### First parameter 0.75
+a = data.frame(group = "WH", value = WH_AR2[,2])
+b = data.frame(group = "MWE", value = WD_AR2[,2])
+c = data.frame(group = "MWWE", value = Weighted_WD_AR2[,2])
+d = data.frame(group = "MSWE", value = WD_cdf_AR2[,2])
+e = data.frame(group = "MMWE k = 50", value = WD_mean_AR2[,2])
+#f = data.frame(group = "Sinkhorn 0.1", value = SH_01_AR2[,1])
+#g = data.frame(group = "Sinkhorn 0.3", value = SH_03_AR2[,1])
+
+
+
+plot.data = rbind(a, b, c, d, e) 
+
+
+mse = cbind(a, b, c, d, e) 
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10)){
+  MSE = sum((mse[,i] + 0.25)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("WH", "MWE", "MMWE k = 50", "MSWE", "MWWE"))
+
+library(ggplot2)
+
+p2 = ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = -0.25) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("AR(2), mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(-0.5, 0)
+
+ggpubr::ggarrange(p1, p2)
+```
+
+
+```{r, eval = FALSE}
+set.seed(1234)
+mt = 200
+n = 3201
+
+
+WH_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+WD_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+Weighted_WD_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+WD_cdf_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+WD_mean_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+SH_01_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+SH_03_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+
+theta0 = c(0.75, -0.25)
+
+for (i in 1:mt){
+
+  y <- arima.sim(n = n, list(ar = theta0), rand.gen = rt, df = 2)  
+  t = rexp(1600, rate = 1)
+  
+  res = optim(par = c(0,0), Whittle, H = 0.5, phi = 0, p = 2, q = 0, y = y)
+  WH_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t)
+  WD_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, mean = TRUE, k = 50)
+  WD_mean_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, cdf = TRUE)
+  WD_cdf_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, weighted = TRUE)
+  Weighted_WD_AR2[i,] = res$par
+  
+  #  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, sinkhorn = TRUE, lambda = 0.1)
+  # SH_01_AR2[i,] = res$par
+  #  
+  # res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, sinkhorn = TRUE, lambda = 0.3)
+  # SH_03_AR2[i,] = res$par
+
+}
+
+
+```
+
+
+```{r, eval = FALSE}
+### First parameter 0.75
+a = data.frame(group = "WH", value = WH_AR2[,1])
+b = data.frame(group = "MWE", value = WD_AR2[,1])
+c = data.frame(group = "MWWE", value = Weighted_WD_AR2[,1])
+d = data.frame(group = "MSWE", value = WD_cdf_AR2[,1])
+e = data.frame(group = "MMWE k = 50", value = WD_mean_AR2[,1])
+#f = data.frame(group = "Sinkhorn 0.1", value = SH_01_AR2[,1])
+#g = data.frame(group = "Sinkhorn 0.3", value = SH_03_AR2[,1])
+
+
+plot.data = rbind(a, b, c, d, e) 
+
+
+mse = cbind(a, b, c, d, e) 
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10)){
+  MSE = sum((mse[,i] - 0.75)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("WH", "MWE", "MMWE k = 50", "MSWE", "MWWE"))
+
+library(ggplot2)
+p1 = ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = 0.75) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("AR(2), mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(0.5, 0.99)
+
+
+### First parameter 0.75
+a = data.frame(group = "WH", value = WH_AR2[,2])
+b = data.frame(group = "MWE", value = WD_AR2[,2])
+c = data.frame(group = "MWWE", value = Weighted_WD_AR2[,2])
+d = data.frame(group = "MSWE", value = WD_cdf_AR2[,2])
+e = data.frame(group = "MMWE k = 50", value = WD_mean_AR2[,2])
+#f = data.frame(group = "Sinkhorn 0.1", value = SH_01_AR2[,1])
+#g = data.frame(group = "Sinkhorn 0.3", value = SH_03_AR2[,1])
+
+
+
+plot.data = rbind(a, b, c, d, e) 
+
+
+mse = cbind(a, b, c, d, e) 
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10)){
+  MSE = sum((mse[,i] + 0.25)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("WH", "MWE", "MMWE k = 50", "MSWE", "MWWE"))
+
+library(ggplot2)
+
+p2 = ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = -0.25) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("AR(2), mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(-0.5, 0)
+
+ggpubr::ggarrange(p1, p2)
+```
+
+```{r, eval = FALSE}
+set.seed(1234)
+mt = 200
+n = 3201
+
+
+WH_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+WD_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+Weighted_WD_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+WD_cdf_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+WD_mean_AR2 = matrix(data = NA, nrow = mt, ncol = 2)
+SH_01_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+SH_03_AR2 = matrix(data = NA, nrow =mt, ncol = 2)
+
+theta0 = c(0.75, -0.25)
+
+for (i in 1:mt){
+
+  y <- arima.sim(n = n, list(ar = theta0), rand.gen = skewt::rskt, df = 4, gamma = 2)  
+  t = rexp(1600, rate = 1)
+  
+  res = optim(par = c(0,0), Whittle, H = 0.5, phi = 0, p = 2, q = 0, y = y)
+  WH_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t)
+  WD_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, mean = TRUE, k = 50)
+  WD_mean_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, cdf = TRUE)
+  WD_cdf_AR2[i,] = res$par
+  
+  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, weighted = TRUE)
+  Weighted_WD_AR2[i,] = res$par
+  
+  #  res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, sinkhorn = TRUE, lambda = 0.1)
+  # SH_01_AR2[i,] = res$par
+  #  
+  # res = optim(par = c(0,0), Wasserstein, H = 0.5, phi = 0, p = 2, q = 0, y = y, theoritical = t, sinkhorn = TRUE, lambda = 0.3)
+  # SH_03_AR2[i,] = res$par
+
+}
+
+
+```
+
+
+```{r, eval = FALSE}
+### First parameter 0.75
+a = data.frame(group = "WH", value = WH_AR2[,1])
+b = data.frame(group = "MWE", value = WD_AR2[,1])
+c = data.frame(group = "MWWE", value = Weighted_WD_AR2[,1])
+d = data.frame(group = "MSWE", value = WD_cdf_AR2[,1])
+e = data.frame(group = "MMWE k = 50", value = WD_mean_AR2[,1])
+#f = data.frame(group = "Sinkhorn 0.1", value = SH_01_AR2[,1])
+#g = data.frame(group = "Sinkhorn 0.3", value = SH_03_AR2[,1])
+
+
+plot.data = rbind(a, b, c, d, e) 
+
+
+mse = cbind(a, b, c, d, e) 
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10)){
+  MSE = sum((mse[,i] - 0.75)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("WH", "MWE", "MMWE k = 50", "MSWE", "MWWE"))
+
+library(ggplot2)
+p1 = ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = 0.75) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("AR(2), mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(0.5, 0.99)
+
+
+### First parameter 0.75
+a = data.frame(group = "WH", value = WH_AR2[,2])
+b = data.frame(group = "MWE", value = WD_AR2[,2])
+c = data.frame(group = "MWWE", value = Weighted_WD_AR2[,2])
+d = data.frame(group = "MSWE", value = WD_cdf_AR2[,2])
+e = data.frame(group = "MMWE k = 50", value = WD_mean_AR2[,2])
+#f = data.frame(group = "Sinkhorn 0.1", value = SH_01_AR2[,1])
+#g = data.frame(group = "Sinkhorn 0.3", value = SH_03_AR2[,1])
+
+
+
+plot.data = rbind(a, b, c, d, e) 
+
+
+mse = cbind(a, b, c, d, e) 
+mse = as.data.frame(mse)
+
+
+for (i in c(2,4,6,8,10)){
+  MSE = sum((mse[,i] + 0.25)^2)
+  print(paste(mse[1,i-1], ": Mean Squared Error = ", round(MSE, digits = 5)))
+}
+
+plot.data$group = as.factor(plot.data$group)
+plot.data$group = factor(plot.data$group, levels = c("WH", "MWE", "MMWE k = 50", "MSWE", "MWWE"))
+
+library(ggplot2)
+
+p2 = ggplot(plot.data, aes(x=group, y=Re(value), fill=group)) +  
+  geom_boxplot()+
+  theme_classic() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = -0.25) +
+  theme(axis.title.x=element_blank()) +
+  theme(axis.title.y=element_blank()) +
+  ggtitle("AR(2), mt = 200")+
+  scale_fill_brewer(palette = "RdPu") +
+  ylim(-0.5, 0)
+
+ggpubr::ggarrange(p1, p2)
+```
+
+
+
