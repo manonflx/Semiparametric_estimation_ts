@@ -45,7 +45,7 @@ Whittle <- function(theta, phi, H, p, q, y){
 }
 
 
-Wasserstein <- function(theta, phi, H, p, q, y, theoritical, cdf = FALSE, mean = TRUE, k = 1 , weighted = FALSE, sinkhorn = FALSE, lambda = 1){
+Wasserstein <- function(theta, phi, H, p, q, y, theoritical, cdf = FALSE, mean = TRUE, k = 1 , weighted = FALSE, sinkhorn = FALSE, lambda = 1, power = 1){
   
   eta = numeric(length = (1 + p + q))
   eta = cbind(H, theta, phi)
@@ -94,7 +94,7 @@ Wasserstein <- function(theta, phi, H, p, q, y, theoritical, cdf = FALSE, mean =
   ### Compute the Wasserstein distance 1D 
   if (weighted == TRUE){
     weight = sort(yf) / sum(yf)
-    WD = transport::wasserstein1d(theoritical, yf,  wa = NULL, wb = weight, p = 1)
+    WD = transport::wasserstein1d(theoritical, yf,  wa = NULL, wb = weight, p = power)
   } else if (sinkhorn == TRUE) {
     x = as.matrix(yf/ sum(yf))
     z = as.matrix(theoritical/sum(theoritical))
@@ -111,22 +111,24 @@ Wasserstein <- function(theta, phi, H, p, q, y, theoritical, cdf = FALSE, mean =
     fun.ecdf <- ecdf(yf)
     my.ecdf <- fun.ecdf(sort(yf))
     
-    WD =  pracma::trapz(sort(yf) ,  abs(1- exp(-sort(yf)) - my.ecdf))
+    WD_cdf =  pracma::trapz(sort(yf) ,  abs(my.ecdf - (1 - exp(-sort(yf)))))
     
   
   } else if (mean == TRUE) {
     ## Empirical CDF values 
     WD = numeric(k)
     for (i in 1:k){
-      t = rexp(((n-1)/2), rate = 1)
-      WD[i] = transport::wasserstein1d(t, yf,  wa = NULL, wb = NULL, p = 1)
+      t = rexp(length(yf), rate = 1)
+      WD[i] = transport::wasserstein1d(t, yf,  wa = NULL, wb = NULL, p = power)
     }
     
-    WD = mean(WD)
+    WD_mean = mean(WD)
 
   } else {
-    WD = transport::wasserstein1d(theoritical, yf,  wa = NULL, wb = NULL, p = 1)
+    WD = transport::wasserstein1d(theoritical, yf,  wa = NULL, wb = NULL, p = power)
   } 
   
 }
+
+
 
